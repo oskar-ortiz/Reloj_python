@@ -1,0 +1,3 @@
+ttkbootstrap
+Pillow
+playsound==1.2.2
