@@ -1,555 +1,477 @@
+"""
+interfaz.py
+Interfaz con ttkbootstrap. Reloj analógico oscuro + neon en Canvas.
+Incluye panel lateral con: alarmas, cronómetro, temporizador, zonas y config básico.
+"""
 import tkinter as tk
 from tkinter import messagebox
-import ttkbootstrap as ttk
-from reloj_logica import RelojLogic
-from interfaz_estilos import EstiloApp
+import math
+import time
+import threading
 
-class InterfazReloj:
-    def __init__(self, root, sound_path=None, tema_inicial="darkly"):
+# ttkbootstrap
+try:
+    import ttkbootstrap as tb
+    from ttkbootstrap.constants import *
+    TB = True
+except Exception:
+    # Fallback: usar tkinter.ttk (menos estilizado)
+    import tkinter.ttk as tb
+    from tkinter.ttk import *
+    TB = False
+
+from reloj_logica import LogicaRelojPro
+import pytz
+from datetime import datetime
+
+class RelojAnalogicoPro:
+    def __init__(self, root):
         self.root = root
-        self.sound_path = sound_path
-        self.logic = None
-        self.modo_actual = "reloj"
-        self.actualizando_cronometro = False
-        self.actualizando_temporizador = False
-        
-        # Inicializar sistema de estilos
-        self.estilos = EstiloApp(root, tema_inicial)
-        
-    def crear_marcas_hora(self, lbl_hora, lbl_fecha):
-        """Crea la interfaz completa profesional"""
-        self.lbl_hora = lbl_hora
-        self.lbl_fecha = lbl_fecha
-        
-        # Crear la lógica del reloj
-        self.logic = RelojLogic(self.lbl_hora, self.lbl_fecha, sound_path=self.sound_path)
-        self.logic.iniciar_reloj()
-        
-        # Crear indicador de estado
-        self.crear_indicador_estado()
-        
-        # Separador decorativo superior
-        sep1 = self.estilos.crear_separador_elegante(self.root)
-        sep1.pack(fill='x', padx=40, pady=(5, 15))
-        
-        # Panel de controles principales
-        self.crear_panel_controles()
-        
-        # Separador entre secciones
-        sep2 = self.estilos.crear_separador_elegante(self.root)
-        sep2.pack(fill='x', padx=40, pady=15)
-        
-        # Panels (inicialmente ocultos)
-        self.crear_panel_cronometro()
-        self.crear_panel_temporizador()
-        self.crear_panel_alarmas()
-        
-        # Footer con información
-        self.crear_footer()
-    
-    def crear_indicador_estado(self):
-        """Crea el indicador visual de estado"""
-        frame_estado = tk.Frame(self.root, bg=self.estilos.colores['bg_primary'])
-        frame_estado.pack(pady=(5, 10))
-        
-        self.badge_estado = self.estilos.crear_badge(frame_estado, "● RELOJ ACTIVO", tipo='success')
-        self.badge_estado.pack()
-    
-    def crear_panel_controles(self):
-        """Crea el panel principal de controles"""
-        card = self.estilos.crear_card_moderna(self.root, padding=25)
-        card.pack(pady=10, padx=30, fill='x')
-        
-        # Header del panel
-        frame_header = tk.Frame(card, bg=self.estilos.colores['bg_card'])
-        frame_header.pack(fill='x', pady=(0, 20))
-        
-        titulo_frame = self.estilos.crear_titulo_seccion(frame_header, "⚡ PANEL DE CONTROL")
-        titulo_frame.pack(side='left', fill='x', expand=True)
-        
-        # Grid de botones 2x2
-        frame_btns = tk.Frame(card, bg=self.estilos.colores['bg_card'])
-        frame_btns.pack(pady=10, fill='x', padx=10)
-        
-        # Fila 1
-        self.btn_alarma = self.estilos.crear_boton_premium(
-            frame_btns, "Alarmas", self.toggle_alarmas, variant='primary', icon='⏰'
-        )
-        self.btn_alarma.grid(row=0, column=0, padx=8, pady=8, sticky='ew')
-        
-        self.btn_cronometro = self.estilos.crear_boton_premium(
-            frame_btns, "Cronómetro", self.toggle_cronometro, variant='success', icon='⏱️'
-        )
-        self.btn_cronometro.grid(row=0, column=1, padx=8, pady=8, sticky='ew')
-        
-        # Fila 2
-        self.btn_temporizador = self.estilos.crear_boton_premium(
-            frame_btns, "Temporizador", self.toggle_temporizador, variant='warning', icon='⏲️'
-        )
-        self.btn_temporizador.grid(row=1, column=0, padx=8, pady=8, sticky='ew')
-        
-        self.btn_hora = self.estilos.crear_boton_premium(
-            frame_btns, "Ver Reloj", self.mostrar_reloj, variant='dark', icon='🕐'
-        )
-        self.btn_hora.grid(row=1, column=1, padx=8, pady=8, sticky='ew')
-        
-        # Hacer columnas uniformes
-        frame_btns.grid_columnconfigure(0, weight=1)
-        frame_btns.grid_columnconfigure(1, weight=1)
-    
-    # ═══════════════════════════════════════════════════════
-    # PANEL CRONÓMETRO
-    # ═══════════════════════════════════════════════════════
-    def crear_panel_cronometro(self):
-        """Crea el panel del cronómetro mejorado"""
-        self.card_crono = self.estilos.crear_card_moderna(self.root, padding=30)
-        
-        # Header
-        frame_header = tk.Frame(self.card_crono, bg=self.estilos.colores['bg_card'])
-        frame_header.pack(fill='x', pady=(0, 20))
-        
-        titulo_frame = self.estilos.crear_titulo_seccion(
-            frame_header, "⏱️ CRONÓMETRO DE PRECISIÓN", color='#10b981'
-        )
-        titulo_frame.pack(side='left', fill='x', expand=True)
-        
-        self.badge_crono = self.estilos.crear_badge(frame_header, "DETENIDO", tipo='secondary')
-        self.badge_crono.pack(side='right')
-        
-        # Display grande del cronómetro
-        frame_display = tk.Frame(
-            self.card_crono, bg='#0a0e1a',
-            highlightthickness=3, highlightbackground='#10b981'
-        )
-        frame_display.pack(pady=20, padx=20, fill='x')
-        
-        self.lbl_cronometro = tk.Label(
-            frame_display, text="00:00:00.00",
-            font=("Consolas", 56, "bold"), bg='#0a0e1a', fg='#10b981', pady=25
-        )
-        self.lbl_cronometro.pack()
-        
-        # Botones de control
-        frame_btns = tk.Frame(self.card_crono, bg=self.estilos.colores['bg_card'])
-        frame_btns.pack(pady=15)
-        
-        self.btn_crono_iniciar = self.estilos.crear_boton_premium(
-            frame_btns, "Iniciar", self.iniciar_cronometro, variant='success', icon='▶'
-        )
-        self.btn_crono_iniciar.pack(side='left', padx=8, ipadx=15)
-        
-        self.btn_crono_pausar = self.estilos.crear_boton_premium(
-            frame_btns, "Pausar", self.pausar_cronometro, variant='warning', icon='⏸'
-        )
-        self.btn_crono_pausar.pack(side='left', padx=8, ipadx=15)
-        self.btn_crono_pausar.configure(state='disabled')
-        
-        self.btn_crono_vuelta = self.estilos.crear_boton_premium(
-            frame_btns, "Vuelta", self.vuelta_cronometro, variant='info', icon='🔄'
-        )
-        self.btn_crono_vuelta.pack(side='left', padx=8, ipadx=15)
-        self.btn_crono_vuelta.configure(state='disabled')
-        
-        self.btn_crono_reiniciar = self.estilos.crear_boton_premium(
-            frame_btns, "Reiniciar", self.reiniciar_cronometro, variant='danger', icon='⟲'
-        )
-        self.btn_crono_reiniciar.pack(side='left', padx=8, ipadx=15)
-        
-        # Lista de vueltas
-        sep = self.estilos.crear_separador_con_texto(self.card_crono, "VUELTAS REGISTRADAS")
-        sep.pack(fill='x', padx=20, pady=15)
-        
-        frame_vueltas = tk.Frame(self.card_crono, bg=self.estilos.colores['bg_card'])
-        frame_vueltas.pack(fill='both', expand=True, padx=20, pady=(0, 15))
-        
-        # Scrollbar y lista
-        scrollbar = ttk.Scrollbar(frame_vueltas, bootstyle="success-round")
-        scrollbar.pack(side='right', fill='y')
-        
-        self.lista_vueltas = tk.Listbox(
-            frame_vueltas, bg='#0a0e1a', fg='#10b981',
-            font=("Consolas", 11), height=5, bd=0, highlightthickness=0,
-            yscrollcommand=scrollbar.set
-        )
-        self.lista_vueltas.pack(side='left', fill='both', expand=True)
-        scrollbar.config(command=self.lista_vueltas.yview)
-    
-    def iniciar_cronometro(self):
-        """Inicia el cronómetro"""
-        self.logic.sw_start()
-        self.btn_crono_iniciar.configure(state='disabled')
-        self.btn_crono_pausar.configure(state='normal')
-        self.btn_crono_vuelta.configure(state='normal')
-        self.badge_crono.configure(text="EN MARCHA", bg=self.estilos.colores['success'])
-        self.actualizando_cronometro = True
-        self.actualizar_display_cronometro()
-    
-    def pausar_cronometro(self):
-        """Pausa el cronómetro"""
-        self.logic.sw_pause()
-        self.btn_crono_iniciar.configure(state='normal', text="▶ Reanudar")
-        self.btn_crono_pausar.configure(state='disabled')
-        self.btn_crono_vuelta.configure(state='disabled')
-        self.badge_crono.configure(text="PAUSADO", bg=self.estilos.colores['warning'])
-        self.actualizando_cronometro = False
-    
-    def vuelta_cronometro(self):
-        """Registra una vuelta"""
-        tiempo_vuelta = self.logic.sw_vuelta()
-        if tiempo_vuelta:
-            vueltas = self.logic.obtener_vueltas()
-            self.lista_vueltas.insert('end', f"Vuelta {len(vueltas)}: {tiempo_vuelta}")
-            self.lista_vueltas.see('end')
-    
-    def reiniciar_cronometro(self):
-        """Reinicia el cronómetro"""
-        self.logic.sw_reset()
-        self.btn_crono_iniciar.configure(state='normal', text="▶ Iniciar")
-        self.btn_crono_pausar.configure(state='disabled')
-        self.btn_crono_vuelta.configure(state='disabled')
-        self.badge_crono.configure(text="DETENIDO", bg=self.estilos.colores['text_secondary'])
-        self.lbl_cronometro.config(text="00:00:00.00")
-        self.lista_vueltas.delete(0, 'end')
-        self.actualizando_cronometro = False
-    
-    def actualizar_display_cronometro(self):
-        """Actualiza el display del cronómetro"""
-        if self.actualizando_cronometro and self.logic.cronometro_corriendo:
-            tiempo = self.logic.obtener_tiempo_cronometro()
-            self.lbl_cronometro.config(text=tiempo)
-            self.root.after(10, self.actualizar_display_cronometro)
-    
-    # ═══════════════════════════════════════════════════════
-    # PANEL TEMPORIZADOR
-    # ═══════════════════════════════════════════════════════
-    def crear_panel_temporizador(self):
-        """Crea el panel del temporizador"""
-        self.card_temp = self.estilos.crear_card_moderna(self.root, padding=30)
-        
-        # Header
-        frame_header = tk.Frame(self.card_temp, bg=self.estilos.colores['bg_card'])
-        frame_header.pack(fill='x', pady=(0, 20))
-        
-        titulo_frame = self.estilos.crear_titulo_seccion(
-            frame_header, "⏲️ TEMPORIZADOR", color='#f59e0b'
-        )
-        titulo_frame.pack(side='left', fill='x', expand=True)
-        
-        self.badge_temp = self.estilos.crear_badge(frame_header, "DETENIDO", tipo='secondary')
-        self.badge_temp.pack(side='right')
-        
-        # Display del temporizador
-        frame_display = tk.Frame(
-            self.card_temp, bg='#0a0e1a',
-            highlightthickness=3, highlightbackground='#f59e0b'
-        )
-        frame_display.pack(pady=20, padx=20, fill='x')
-        
-        self.lbl_temporizador = tk.Label(
-            frame_display, text="00:00",
-            font=("Consolas", 56, "bold"), bg='#0a0e1a', fg='#f59e0b', pady=25
-        )
-        self.lbl_temporizador.pack()
-        
-        # Configuración de tiempo
-        frame_config = tk.Frame(self.card_temp, bg=self.estilos.colores['bg_card'])
-        frame_config.pack(pady=15)
-        
-        tk.Label(
-            frame_config, text="Minutos:", font=("Segoe UI", 11),
-            bg=self.estilos.colores['bg_card'], fg=self.estilos.colores['text_secondary']
-        ).grid(row=0, column=0, padx=10)
-        
-        self.spin_minutos = ttk.Spinbox(
-            frame_config, from_=0, to=59, width=8, font=("Consolas", 14), bootstyle="warning"
-        )
-        self.spin_minutos.set(5)
-        self.spin_minutos.grid(row=0, column=1, padx=10)
-        
-        tk.Label(
-            frame_config, text="Segundos:", font=("Segoe UI", 11),
-            bg=self.estilos.colores['bg_card'], fg=self.estilos.colores['text_secondary']
-        ).grid(row=0, column=2, padx=10)
-        
-        self.spin_segundos = ttk.Spinbox(
-            frame_config, from_=0, to=59, width=8, font=("Consolas", 14), bootstyle="warning"
-        )
-        self.spin_segundos.set(0)
-        self.spin_segundos.grid(row=0, column=3, padx=10)
-        
-        # Botones
-        frame_btns = tk.Frame(self.card_temp, bg=self.estilos.colores['bg_card'])
-        frame_btns.pack(pady=15)
-        
-        self.btn_temp_iniciar = self.estilos.crear_boton_premium(
-            frame_btns, "Iniciar", self.iniciar_temporizador, variant='warning', icon='▶'
-        )
-        self.btn_temp_iniciar.pack(side='left', padx=8, ipadx=15)
-        
-        self.btn_temp_pausar = self.estilos.crear_boton_premium(
-            frame_btns, "Pausar", self.pausar_temporizador, variant='secondary', icon='⏸'
-        )
-        self.btn_temp_pausar.pack(side='left', padx=8, ipadx=15)
-        self.btn_temp_pausar.configure(state='disabled')
-        
-        self.btn_temp_reiniciar = self.estilos.crear_boton_premium(
-            frame_btns, "Reiniciar", self.reiniciar_temporizador, variant='danger', icon='⟲'
-        )
-        self.btn_temp_reiniciar.pack(side='left', padx=8, ipadx=15)
-    
-    def iniciar_temporizador(self):
-        """Inicia el temporizador"""
-        minutos = int(self.spin_minutos.get())
-        segundos = int(self.spin_segundos.get())
-        
-        if minutos == 0 and segundos == 0:
-            messagebox.showwarning("Temporizador", "Configura un tiempo mayor a 0")
-            return
-        
-        self.logic.temp_start(minutos, segundos)
-        self.btn_temp_iniciar.configure(state='disabled')
-        self.btn_temp_pausar.configure(state='normal')
-        self.spin_minutos.configure(state='disabled')
-        self.spin_segundos.configure(state='disabled')
-        self.badge_temp.configure(text="EN MARCHA", bg=self.estilos.colores['warning'])
-        self.actualizando_temporizador = True
-        self.actualizar_display_temporizador()
-    
-    def pausar_temporizador(self):
-        """Pausa el temporizador"""
-        self.logic.temp_pause()
-        self.btn_temp_iniciar.configure(state='normal')
-        self.btn_temp_pausar.configure(state='disabled')
-        self.badge_temp.configure(text="PAUSADO", bg=self.estilos.colores['text_secondary'])
-        self.actualizando_temporizador = False
-    
-    def reiniciar_temporizador(self):
-        """Reinicia el temporizador"""
-        self.logic.temp_reset()
-        self.btn_temp_iniciar.configure(state='normal')
-        self.btn_temp_pausar.configure(state='disabled')
-        self.spin_minutos.configure(state='normal')
-        self.spin_segundos.configure(state='normal')
-        self.badge_temp.configure(text="DETENIDO", bg=self.estilos.colores['text_secondary'])
-        self.lbl_temporizador.config(text="00:00")
-        self.actualizando_temporizador = False
-    
-    def actualizar_display_temporizador(self):
-        """Actualiza el display del temporizador"""
-        if self.actualizando_temporizador and self.logic.temporizador_activo():
-            tiempo = self.logic.obtener_tiempo_temporizador()
-            self.lbl_temporizador.config(text=tiempo)
-            self.root.after(100, self.actualizar_display_temporizador)
-        elif self.actualizando_temporizador:
-            # Terminó el temporizador
-            self.lbl_temporizador.config(text="00:00")
-            self.badge_temp.configure(text="¡TERMINADO!", bg=self.estilos.colores['danger'])
-            self.btn_temp_iniciar.configure(state='normal')
-            self.btn_temp_pausar.configure(state='disabled')
-            self.spin_minutos.configure(state='normal')
-            self.spin_segundos.configure(state='normal')
-            self.actualizando_temporizador = False
-            messagebox.showinfo("⏲️ Temporizador", "¡El tiempo ha terminado!")
-    
-    # ═══════════════════════════════════════════════════════
-    # PANEL ALARMAS
-    # ═══════════════════════════════════════════════════════
-    def crear_panel_alarmas(self):
-        """Crea el panel de alarmas"""
-        self.card_alarmas = self.estilos.crear_card_moderna(self.root, padding=30)
-        
-        # Header
-        frame_header = tk.Frame(self.card_alarmas, bg=self.estilos.colores['bg_card'])
-        frame_header.pack(fill='x', pady=(0, 20))
-        
-        titulo_frame = self.estilos.crear_titulo_seccion(
-            frame_header, "⏰ GESTOR DE ALARMAS", color='#00d4ff'
-        )
-        titulo_frame.pack(side='left', fill='x', expand=True)
-        
-        btn_nueva = self.estilos.crear_boton_premium(
-            frame_header, "Nueva", self.agregar_alarma_dialog, variant='primary', icon='+'
-        )
-        btn_nueva.pack(side='right')
-        
-        # Lista de alarmas
-        frame_lista = tk.Frame(self.card_alarmas, bg=self.estilos.colores['bg_card'])
-        frame_lista.pack(fill='both', expand=True, padx=10, pady=10)
-        
-        scrollbar = ttk.Scrollbar(frame_lista, bootstyle="info-round")
-        scrollbar.pack(side='right', fill='y')
-        
-        self.lista_alarmas = tk.Listbox(
-            frame_lista, bg='#0a0e1a', fg='#00d4ff',
-            font=("Segoe UI", 12), height=6, bd=0, highlightthickness=0,
-            yscrollcommand=scrollbar.set
-        )
-        self.lista_alarmas.pack(side='left', fill='both', expand=True)
-        scrollbar.config(command=self.lista_alarmas.yview)
-        
-        # Botones de gestión
-        frame_btns = tk.Frame(self.card_alarmas, bg=self.estilos.colores['bg_card'])
-        frame_btns.pack(pady=10)
-        
-        self.btn_eliminar_alarma = self.estilos.crear_boton_premium(
-            frame_btns, "Eliminar", self.eliminar_alarma, variant='danger', icon='🗑️'
-        )
-        self.btn_eliminar_alarma.pack(side='left', padx=5)
-        
-        self.actualizar_lista_alarmas()
-    
-    def agregar_alarma_dialog(self):
-        """Muestra el diálogo para agregar alarma"""
-        ventana = tk.Toplevel(self.root)
-        ventana.title("⏰ Nueva Alarma")
-        ventana.geometry("450x300")
-        ventana.configure(bg=self.estilos.colores['bg_primary'])
-        ventana.resizable(False, False)
-        ventana.transient(self.root)
-        ventana.grab_set()
-        
-        # Centrar
-        ventana.update_idletasks()
-        x = (ventana.winfo_screenwidth() // 2) - 225
-        y = (ventana.winfo_screenheight() // 2) - 150
-        ventana.geometry(f"450x300+{x}+{y}")
-        
-        tk.Label(
-            ventana, text="⏰", font=("Segoe UI", 48),
-            bg=self.estilos.colores['bg_primary'], fg=self.estilos.colores['accent_cyan']
-        ).pack(pady=20)
-        
-        tk.Label(
-            ventana, text="NUEVA ALARMA", font=("Segoe UI", 18, "bold"),
-            bg=self.estilos.colores['bg_primary'], fg=self.estilos.colores['text_primary']
-        ).pack(pady=10)
-        
-        frame_inputs = tk.Frame(
-            ventana, bg=self.estilos.colores['bg_card'],
-            highlightthickness=2, highlightbackground=self.estilos.colores['accent_cyan']
-        )
-        frame_inputs.pack(pady=20, padx=50, fill='x')
-        
-        tk.Label(
-            frame_inputs, text="Hora (HH:MM):", font=("Segoe UI", 11),
-            bg=self.estilos.colores['bg_card'], fg=self.estilos.colores['text_secondary']
-        ).pack(pady=(15, 5))
-        
-        entry_hora = ttk.Entry(
-            frame_inputs, font=("Consolas", 16, "bold"),
-            width=10, bootstyle="info", justify='center'
-        )
-        entry_hora.pack(pady=(0, 15))
-        entry_hora.insert(0, "07:00")
-        entry_hora.focus()
-        
-        def guardar():
-            hora = entry_hora.get().strip()
-            if ':' in hora:
-                self.logic.agregar_alarma(hora, f"Alarma {hora}")
-                self.actualizar_lista_alarmas()
-                ventana.destroy()
-                messagebox.showinfo("✓ Alarma", f"Alarma configurada para las {hora}")
+        # aplicar estilo
+        if TB:
+            self.style = tb.Style(theme="darkly")  # tema oscuro
+        else:
+            self.style = None
+        self.root.title("⏰ Reloj Analógico Pro - Oskar Edition")
+        self.root.geometry("1200x800")
+        self.root.minsize(1000, 700)
+
+        # colores neon / oscuro (puedes ajustarlos)
+        self.colores = {
+            "bg": "#0b0f14",
+            "card": "#0f1620",
+            "neon": "#39f0ff",      # cyan neon
+            "accent": "#7b61ff",    # magenta accent
+            "muted": "#8a97a8",
+            "tick": "#2c3e50",
+            "warning": "#ffb86b"
+        }
+
+        # lógica (pasamos callback para alarm trigger)
+        self.logic = LogicaRelojPro(on_alarm_callback=self._on_alarm_trigger)
+
+        # parámetros canvas reloj
+        self.canvas_size = 540
+        self.center = self.canvas_size // 2
+        self.radius = int(self.canvas_size * 0.42)
+
+        # IDs para actualizar manecillas
+        self._ids = {"hora": None, "min": None, "seg": None, "centro": None, "ticks": []}
+
+        # GUI layout
+        self._crear_layout()
+        # dibujar cara y manecillas iniciales
+        self._dibujar_cara()
+        self._crear_manecillas()
+        # iniciar animación
+        self._ultima = 0.0
+        self.animar_reloj()
+
+        # iniciar actualizadores de cronómetro/temporizador en UI
+        self.actualizar_ui_crono()
+        self.actualizar_ui_temp()
+
+    # ---------------- Layout principal ----------------
+    def _crear_layout(self):
+        # root background
+        self.root.configure(bg=self.colores["bg"])
+        # grid: 0 = izquierda (reloj), 1 = derecha (panel)
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=0)
+
+        # Frame izquierdo (reloj)
+        left = tk.Frame(self.root, bg=self.colores["bg"])
+        left.grid(row=0, column=0, sticky='nsew', padx=16, pady=16)
+        left.grid_rowconfigure(0, weight=0)
+        left.grid_rowconfigure(1, weight=1)
+        left.grid_columnconfigure(0, weight=1)
+
+        header = tk.Frame(left, bg=self.colores["bg"])
+        header.grid(row=0, column=0, sticky='ew', pady=(8,4))
+        tk.Label(header, text="RELOJ ANALÓGICO PRO", font=("Segoe UI", 18, "bold"), fg=self.colores["neon"], bg=self.colores["bg"]).pack()
+        tk.Label(header, text="OSKAR EDITION · 2025", font=("Segoe UI", 10), fg=self.colores["muted"], bg=self.colores["bg"]).pack()
+
+        # canvas card
+        card = tk.Frame(left, bg=self.colores["card"], bd=0, relief='flat')
+        card.grid(row=1, column=0, sticky='n', pady=8)
+        self.canvas = tk.Canvas(card, width=self.canvas_size, height=self.canvas_size, bg=self.colores["card"], highlightthickness=0)
+        self.canvas.pack(padx=20, pady=20)
+
+        # digital time + date
+        foot = tk.Frame(left, bg=self.colores["bg"])
+        foot.grid(row=2, column=0, sticky='ew', pady=(4,10))
+        self.lbl_digital = tk.Label(foot, text="00:00:00", font=("Consolas", 24), fg=self.colores["neon"], bg=self.colores["bg"])
+        self.lbl_digital.pack()
+        self.lbl_fecha = tk.Label(foot, text="", font=("Segoe UI", 11), fg=self.colores["muted"], bg=self.colores["bg"])
+        self.lbl_fecha.pack()
+
+        # Frame derecho (panel)
+        right = tk.Frame(self.root, bg=self.colores["card"], width=380)
+        right.grid(row=0, column=1, sticky='nsew', padx=(0,16), pady=16)
+        right.grid_rowconfigure(5, weight=1)
+
+        # Panel header
+        tk.Label(right, text="PANEL DE CONTROL", font=("Segoe UI", 14, "bold"), fg=self.colores["accent"], bg=self.colores["card"]).pack(pady=(14,8))
+        tk.Frame(right, bg=self.colores["bg"], height=2).pack(fill='x', padx=12, pady=6)
+
+        # NAV botones
+        nav = tk.Frame(right, bg=self.colores["card"])
+        nav.pack(pady=8, padx=12, fill='x')
+        btns = [
+            ("Alarmas", self.mostrar_panel_alarmas),
+            ("Cronómetro", self.mostrar_panel_cronometro),
+            ("Temporizador", self.mostrar_panel_temporizador),
+            ("Zonas", self.mostrar_panel_zonas),
+            ("Config", self.mostrar_panel_config)
+        ]
+        for i, (label, cmd) in enumerate(btns):
+            b = tk.Button(nav, text=label, command=cmd, bg=self.colores["bg"], fg=self.colores["neon"],
+                          relief='flat', padx=8, pady=6, cursor='hand2')
+            b.grid(row=i, column=0, sticky='ew', pady=4)
+
+        # contenedor de subpaneles
+        self.subpanel = tk.Frame(right, bg=self.colores["card"])
+        self.subpanel.pack(fill='both', expand=True, padx=12, pady=12)
+
+        # iniciamos mostrando alarmas
+        self.mostrar_panel_alarmas()
+
+    # ---------------- Reloj analógico/carátula ----------------
+    def _dibujar_cara(self):
+        c = self.canvas
+        c.delete("cara")
+        center = self.center
+        r = self.radius
+
+        # Outer glow (simulado con varios círculos)
+        for i, alpha in enumerate([18, 12, 6]):
+            offset = 18 + i*6
+            c.create_oval(center - r - offset, center - r - offset, center + r + offset, center + r + offset,
+                          fill=self.colores["bg"], outline="", tags="cara")
+
+        # Face
+        c.create_oval(center - r, center - r, center + r, center + r,
+                      fill=self.colores["card"], outline=self.colores["neon"], width=3, tags="cara")
+
+        # ticks horas (más visibles) y minutos (sutiles)
+        for id_ in self._ids.get("ticks", []):
+            try:
+                self.canvas.delete(id_)
+            except:
+                pass
+        self._ids["ticks"].clear()
+
+        for m in range(60):
+            angle = math.radians(m * 6)
+            cos = math.cos(angle)
+            sin = math.sin(angle)
+            if m % 5 == 0:
+                x1 = center + (r - 10) * sin
+                y1 = center - (r - 10) * cos
+                x2 = center + (r - 30) * sin
+                y2 = center - (r - 30) * cos
+                idtick = c.create_line(x1, y1, x2, y2, width=4, fill=self.colores["neon"], capstyle='round', tags="cara")
+                self._ids["ticks"].append(idtick)
+                # números
+                num = 12 if m == 0 else m // 5
+                tx = center + (r - 70) * sin
+                ty = center - (r - 70) * cos
+                c.create_text(tx, ty, text=str(num), font=("Segoe UI", 12), fill=self.colores["muted"], tags="cara")
             else:
-                messagebox.showwarning("Error", "Formato inválido. Usa HH:MM")
-        
-        frame_btns = tk.Frame(ventana, bg=self.estilos.colores['bg_primary'])
-        frame_btns.pack(pady=15)
-        
-        self.estilos.crear_boton_premium(
-            frame_btns, "Guardar", guardar, variant='success', icon='✓'
-        ).pack(side='left', padx=10, ipadx=15)
-        
-        self.estilos.crear_boton_premium(
-            frame_btns, "Cancelar", ventana.destroy, variant='danger', icon='✕'
-        ).pack(side='left', padx=10, ipadx=15)
-        
-        entry_hora.bind('<Return>', lambda e: guardar())
-    
-    def eliminar_alarma(self):
-        """Elimina la alarma seleccionada"""
-        seleccion = self.lista_alarmas.curselection()
-        if seleccion:
-            indice = seleccion[0]
-            self.logic.eliminar_alarma(indice)
-            self.actualizar_lista_alarmas()
-    
-    def actualizar_lista_alarmas(self):
-        """Actualiza la lista de alarmas"""
-        self.lista_alarmas.delete(0, 'end')
-        for i, alarma in enumerate(self.logic.obtener_alarmas()):
-            estado = "✓ ACTIVA" if alarma['activa'] else "✗ INACTIVA"
-            self.lista_alarmas.insert('end', f"{alarma['hora']} - {estado}")
-    
-    # ═══════════════════════════════════════════════════════
-    # CONTROLES DE NAVEGACIÓN
-    # ═══════════════════════════════════════════════════════
-    def toggle_cronometro(self):
-        """Muestra/oculta el cronómetro"""
-        self.ocultar_todos_paneles()
-        if self.modo_actual != "cronometro":
-            self.card_crono.pack(pady=10, padx=30, fill='both', expand=True)
-            self.modo_actual = "cronometro"
-            self.badge_estado.configure(text="● CRONÓMETRO", bg=self.estilos.colores['success'])
+                x1 = center + (r - 14) * sin
+                y1 = center - (r - 14) * cos
+                x2 = center + (r - 22) * sin
+                y2 = center - (r - 22) * cos
+                idtick = c.create_line(x1, y1, x2, y2, width=1, fill=self.colores["tick"], tags="cara")
+                self._ids["ticks"].append(idtick)
+
+        # centro
+        centro = c.create_oval(center - 6, center - 6, center + 6, center + 6, fill=self.colores["neon"], outline="", tags="cara")
+        self._ids["centro"] = centro
+
+    def _crear_manecillas(self):
+        c = self.canvas
+        center = self.center
+        # si existen borrarlas primero
+        for key in ("hora","min","seg"):
+            if self._ids.get(key):
+                try:
+                    c.delete(self._ids[key])
+                except:
+                    pass
+        # crear manecillas
+        hora_line = c.create_line(center, center, center, center - int(self.radius * 0.5),
+                                  width=8, capstyle='round', fill=self.colores["accent"])
+        min_line = c.create_line(center, center, center, center - int(self.radius * 0.75),
+                                 width=5, capstyle='round', fill=self.colores["neon"])
+        seg_line = c.create_line(center, center, center, center - int(self.radius * 0.9),
+                                 width=2, capstyle='round', fill=self.colores["warning"])
+
+        self._ids["hora"] = hora_line
+        self._ids["min"] = min_line
+        self._ids["seg"] = seg_line
+
+    def _actualizar_manecillas(self, h, m, s_float):
+        c = self.canvas
+        center = self.center
+        r = self.radius
+
+        # angulos: convertir a radianes; 0 arriba
+        ang_seg = math.radians(s_float * 6)  # 360/60
+        ang_min = math.radians(m * 6 + s_float * 0.1)
+        ang_hor = math.radians((h % 12) * 30 + m * 0.5)
+
+        def coords(angle, length_ratio):
+            x = center + (r * length_ratio) * math.sin(angle)
+            y = center - (r * length_ratio) * math.cos(angle)
+            return (center, center, x, y)
+
+        try:
+            c.coords(self._ids["hora"], *coords(ang_hor, 0.5))
+            c.coords(self._ids["min"], *coords(ang_min, 0.75))
+            c.coords(self._ids["seg"], *coords(ang_seg, 0.9))
+        except Exception:
+            # si algo falla, recrear manecillas
+            self._crear_manecillas()
+
+    # ---------------- Loop animación ----------------
+    def animar_reloj(self):
+        ahora = time.time()
+        # limitar ~30 FPS
+        if ahora - self._ultima < 1/30:
+            self.root.after(10, self.animar_reloj)
+            return
+        self._ultima = ahora
+
+        dt = datetime.now()
+        horas = dt.hour
+        minutos = dt.minute
+        segundos = dt.second + dt.microsecond / 1_000_000.0
+
+        # actualizar manecillas y etiquetas
+        self._actualizar_manecillas(horas, minutos, segundos)
+        self.lbl_digital.config(text=dt.strftime("%H:%M:%S"))
+        self.lbl_fecha.config(text=dt.strftime("%A, %d %B %Y"))
+
+        self.root.after(33, self.animar_reloj)
+
+    # ----------------- PANEL: ALARMAS -----------------
+    def mostrar_panel_alarmas(self):
+        self._limpiar_subpanel()
+        frame = tk.Frame(self.subpanel, bg=self.colores["card"])
+        frame.pack(fill='both', expand=True)
+
+        # lista
+        tk.Label(frame, text="Alarmas programadas", bg=self.colores["card"], fg=self.colores["neon"], font=("Segoe UI", 12, "bold")).pack(pady=(8,4))
+        list_frame = tk.Frame(frame, bg=self.colores["card"])
+        list_frame.pack(fill='x', padx=8)
+
+        self.lb_alarmas = tk.Listbox(list_frame, bg=self.colores["bg"], fg=self.colores["neon"], bd=0, height=6)
+        self.lb_alarmas.pack(side='left', fill='both', expand=True, padx=(0,4), pady=6)
+        scrollbar = tk.Scrollbar(list_frame, command=self.lb_alarmas.yview)
+        scrollbar.pack(side='right', fill='y')
+        self.lb_alarmas.config(yscrollcommand=scrollbar.set)
+
+        self._refrescar_lista_alarmas()
+
+        # formulario
+        form = tk.Frame(frame, bg=self.colores["card"])
+        form.pack(padx=8, pady=8, fill='x')
+        tk.Label(form, text="Hora (HH):", bg=self.colores["card"], fg=self.colores["muted"]).grid(row=0,column=0, sticky='e')
+        self.ent_hora = tk.Entry(form, width=5)
+        self.ent_hora.grid(row=0,column=1, padx=6)
+        tk.Label(form, text="Minuto (MM):", bg=self.colores["card"], fg=self.colores["muted"]).grid(row=0,column=2, sticky='e')
+        self.ent_min = tk.Entry(form, width=5)
+        self.ent_min.grid(row=0,column=3, padx=6)
+        tk.Label(form, text="Nombre:", bg=self.colores["card"], fg=self.colores["muted"]).grid(row=1,column=0, sticky='e')
+        self.ent_name = tk.Entry(form, width=20)
+        self.ent_name.grid(row=1,column=1, columnspan=3, pady=6, sticky='w')
+
+        chk_frame = tk.Frame(form, bg=self.colores["card"])
+        chk_frame.grid(row=2, column=0, columnspan=4, pady=(4,0))
+        self.var_repetir = tk.BooleanVar(value=False)
+        tk.Checkbutton(chk_frame, text="Repetir diariamente", variable=self.var_repetir, bg=self.colores["card"], fg=self.colores["muted"], selectcolor=self.colores["card"]).pack(anchor='w')
+
+        btns = tk.Frame(frame, bg=self.colores["card"])
+        btns.pack(pady=6)
+        tk.Button(btns, text="Agregar", command=self._ui_agregar_alarma, bg=self.colores["neon"], fg="#001", padx=10).pack(side='left', padx=6)
+        tk.Button(btns, text="Eliminar seleccionada", command=self._ui_eliminar_alarma, bg=self.colores["accent"], fg="#fff").pack(side='left', padx=6)
+
+    def _refrescar_lista_alarmas(self):
+        try:
+            self.lb_alarmas.delete(0, tk.END)
+        except Exception:
+            pass
+        for a in self.logic.obtener_alarmas():
+            estado = "✓" if a.get("activa", False) else "✗"
+            rep = "🔁" if a.get("repetir", False) else ""
+            texto = f"{estado} {a['hora']:02}:{a['minuto']:02} - {a['nombre']} {rep}"
+            self.lb_alarmas.insert(tk.END, texto)
+
+    def _ui_agregar_alarma(self):
+        try:
+            h = int(self.ent_hora.get())
+            m = int(self.ent_min.get())
+            name = self.ent_name.get().strip() or "Alarma"
+            rep = self.var_repetir.get()
+            self.logic.agregar_alarma(h, m, name, rep)
+            messagebox.showinfo("Alarma", f"Alarma agregada: {name} {h:02}:{m:02}")
+            self._refrescar_lista_alarmas()
+        except ValueError:
+            messagebox.showerror("Error", "Introduce hora y minuto válidos (números).")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def _ui_eliminar_alarma(self):
+        sel = self.lb_alarmas.curselection()
+        if sel:
+            self.logic.eliminar_alarma(sel[0])
+            self._refrescar_lista_alarmas()
         else:
-            self.modo_actual = "reloj"
-            self.badge_estado.configure(text="● RELOJ", bg=self.estilos.colores['info'])
+            messagebox.showwarning("Selecciona", "Selecciona una alarma primero")
+
+    # --------------- PANEL: CRONOMETRO ----------------
+    def mostrar_panel_cronometro(self):
+        self._limpiar_subpanel()
+        frame = tk.Frame(self.subpanel, bg=self.colores["card"])
+        frame.pack(fill='both', expand=True)
+        tk.Label(frame, text="Cronómetro", bg=self.colores["card"], fg=self.colores["neon"], font=("Segoe UI", 12,"bold")).pack(pady=6)
+        self.lbl_crono_ui = tk.Label(frame, text="00:00:00.00", font=("Consolas", 16), bg=self.colores["card"], fg=self.colores["muted"])
+        self.lbl_crono_ui.pack(pady=8)
+
+        btns = tk.Frame(frame, bg=self.colores["card"])
+        btns.pack()
+        tk.Button(btns, text="Iniciar", command=self._crono_iniciar, bg=self.colores["neon"]).grid(row=0,column=0,padx=6)
+        tk.Button(btns, text="Pausar", command=self._crono_pausar, bg=self.colores["accent"]).grid(row=0,column=1,padx=6)
+        tk.Button(btns, text="Vuelta", command=self._crono_vuelta, bg=self.colores["warning"]).grid(row=0,column=2,padx=6)
+        tk.Button(btns, text="Reset", command=self._crono_reset, bg=self.colores["bg"], fg=self.colores["neon"]).grid(row=0,column=3,padx=6)
+
+        tk.Label(frame, text="Vueltas:", bg=self.colores["card"], fg=self.colores["muted"]).pack(pady=(12,0))
+        self.lb_vueltas = tk.Listbox(frame, height=6, bg=self.colores["bg"], fg=self.colores["neon"])
+        self.lb_vueltas.pack(fill='both', padx=8, pady=6)
+
+    def _crono_iniciar(self):
+        self.logic.crono_start()
+    def _crono_pausar(self):
+        self.logic.crono_pause()
+    def _crono_vuelta(self):
+        v = self.logic.crono_vuelta()
+        if v:
+            self.lb_vueltas.insert(tk.END, v)
+    def _crono_reset(self):
+        self.logic.crono_reset()
+        try:
+            self.lb_vueltas.delete(0, tk.END)
+        except:
+            pass
+
+    def actualizar_ui_crono(self):
+        try:
+            if self.logic.cronometro_corriendo or self.logic.cronometro_iniciado:
+                t = self.logic.obtener_tiempo_cronometro()
+                if hasattr(self, 'lbl_crono_ui'):
+                    self.lbl_crono_ui.config(text=t)
+        except Exception:
+            pass
+        self.root.after(100, self.actualizar_ui_crono)
+
+    # --------------- PANEL: TEMPORIZADOR ----------------
+    def mostrar_panel_temporizador(self):
+        self._limpiar_subpanel()
+        frame = tk.Frame(self.subpanel, bg=self.colores["card"])
+        frame.pack(fill='both', expand=True)
+        tk.Label(frame, text="Temporizador (s)", bg=self.colores["card"], fg=self.colores["neon"], font=("Segoe UI", 12,"bold")).pack(pady=6)
+        self.ent_temp = tk.Entry(frame, width=12)
+        self.ent_temp.pack(pady=6)
+        tk.Button(frame, text="Iniciar", command=self._ui_iniciar_temporizador, bg=self.colores["neon"]).pack(pady=4)
+        tk.Button(frame, text="Detener", command=self.logic.detener_temporizador, bg=self.colores["accent"]).pack(pady=4)
+        self.lbl_temp_ui = tk.Label(frame, text="00:00:00", bg=self.colores["card"], fg=self.colores["muted"])
+        self.lbl_temp_ui.pack(pady=8)
+
+    def _ui_iniciar_temporizador(self):
+        try:
+            s = int(self.ent_temp.get())
+            self.logic.iniciar_temporizador(s)
+            messagebox.showinfo("Temporizador", f"Temporizador iniciado por {s} segundos")
+        except ValueError:
+            messagebox.showerror("Error", "Introduce segundos válidos (número entero)")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def actualizar_ui_temp(self):
+        try:
+            if hasattr(self, 'lbl_temp_ui'):
+                self.lbl_temp_ui.config(text=self.logic.obtener_tiempo_temporizador())
+        except Exception:
+            pass
+        self.root.after(500, self.actualizar_ui_temp)
+
+    # --------------- PANEL: ZONAS ----------------
+    def mostrar_panel_zonas(self):
+        self._limpiar_subpanel()
+        frame = tk.Frame(self.subpanel, bg=self.colores["card"])
+        frame.pack(fill='both', expand=True)
+        tk.Label(frame, text="Zonas Horarias", bg=self.colores["card"], fg=self.colores["neon"], font=("Segoe UI", 12,"bold")).pack(pady=6)
+
+        zonas = ["America/Bogota","America/Mexico_City","Europe/London","Asia/Tokyo","Australia/Sydney"]
+        self.var_zona = tk.StringVar(value=zonas[0])
+        tk.OptionMenu(frame, self.var_zona, *zonas).pack(pady=6)
+        self.lbl_zona_hora = tk.Label(frame, text="", bg=self.colores["card"], fg=self.colores["muted"])
+        self.lbl_zona_hora.pack(pady=6)
+        self._actualizar_zona()
     
-    def toggle_temporizador(self):
-        """Muestra/oculta el temporizador"""
-        self.ocultar_todos_paneles()
-        if self.modo_actual != "temporizador":
-            self.card_temp.pack(pady=10, padx=30, fill='both', expand=True)
-            self.modo_actual = "temporizador"
-            self.badge_estado.configure(text="● TEMPORIZADOR", bg=self.estilos.colores['warning'])
-        else:
-            self.modo_actual = "reloj"
-            self.badge_estado.configure(text="● RELOJ", bg=self.estilos.colores['info'])
-    
-    def toggle_alarmas(self):
-        """Muestra/oculta las alarmas"""
-        self.ocultar_todos_paneles()
-        if self.modo_actual != "alarmas":
-            self.card_alarmas.pack(pady=10, padx=30, fill='both', expand=True)
-            self.modo_actual = "alarmas"
-            self.badge_estado.configure(text="● ALARMAS", bg=self.estilos.colores['info'])
-        else:
-            self.modo_actual = "reloj"
-            self.badge_estado.configure(text="● RELOJ", bg=self.estilos.colores['info'])
-    
-    def mostrar_reloj(self):
-        """Muestra solo el reloj"""
-        self.ocultar_todos_paneles()
-        self.modo_actual = "reloj"
-        self.badge_estado.configure(text="● RELOJ ACTIVO", bg=self.estilos.colores['success'])
-    
-    def ocultar_todos_paneles(self):
-        """Oculta todos los paneles secundarios"""
-        self.card_crono.pack_forget()
-        self.card_temp.pack_forget()
-        self.card_alarmas.pack_forget()
-    
-    def crear_footer(self):
-        """Crea el footer"""
-        sep = self.estilos.crear_separador_elegante(self.root)
-        sep.pack(fill='x', padx=40, pady=20, side='bottom')
-        
-        footer = tk.Frame(self.root, bg=self.estilos.colores['bg_primary'])
-        footer.pack(side='bottom', pady=(0, 20))
-        
-        tk.Label(
-            footer, text="⚡", font=("Segoe UI", 16),
-            bg=self.estilos.colores['bg_primary'], fg=self.estilos.colores['accent_cyan']
-        ).pack()
-        
-        tk.Label(
-            footer, text="Reloj Profesional · Oskar Edition · 2025",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.estilos.colores['bg_primary'], fg=self.estilos.colores['text_secondary']
-        ).pack(pady=5)
-        
-        tk.Label(
-            footer, text="Python + ttkbootstrap",
-            font=("Segoe UI", 8),
-            bg=self.estilos.colores['bg_primary'], fg=self.estilos.colores['text_muted']
-        ).pack()
+    def _actualizar_zona(self):
+        try:
+            tzname = self.var_zona.get()
+            tz = pytz.timezone(tzname)
+            ahora = datetime.now(tz)
+            self.lbl_zona_hora.config(text=ahora.strftime("%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            self.lbl_zona_hora.config(text="Error zona")
+        self.root.after(1000, self._actualizar_zona)
+
+    # --------------- PANEL: CONFIG ----------------
+    def mostrar_panel_config(self):
+        self._limpiar_subpanel()
+        frame = tk.Frame(self.subpanel, bg=self.colores["card"])
+        frame.pack(fill='both', expand=True)
+        tk.Label(frame, text="Configuración", bg=self.colores["card"], fg=self.colores["neon"], font=("Segoe UI", 12,"bold")).pack(pady=6)
+        tk.Label(frame, text="Tema: Oscuro (neon)", bg=self.colores["card"], fg=self.colores["muted"]).pack(pady=4)
+        tk.Label(frame, text="Sonido de alarma: integrado (sistema)", bg=self.colores["card"], fg=self.colores["muted"]).pack(pady=4)
+
+    # ----------------- UTILS -------------------
+    def _limpiar_subpanel(self):
+        for w in self.subpanel.winfo_children():
+            w.destroy()
+
+    # ----------------- ALARM TRIGGER CALLBACK (UI) -------------------
+    def _on_alarm_trigger(self, alarma):
+        # alarma: dict con keys 'nombre', 'hora', 'minuto' (puede venir desde temporizador con hora None)
+        nombre = alarma.get("nombre", "Alarma")
+        # llamar a UI en hilo principal
+        def _show():
+            try:
+                messagebox.showinfo("Alarma", f"🔔 {nombre}")
+                # intentar sonido: winsound en Windows, si no usar bell()
+                try:
+                    import winsound
+                    winsound.Beep(1000, 700)
+                except Exception:
+                    try:
+                        self.root.bell()
+                    except:
+                        pass
+            except Exception:
+                pass
+        # ejecutar en main thread
+        self.root.after(10, _show)
+
+    # ----------------- cerrar (cleanup) -------------------
+    def close(self):
+        try:
+            self.logic.stop()
+        except:
+            pass
+
+# Fin interfaz.py

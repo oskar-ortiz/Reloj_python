@@ -1,219 +1,154 @@
+"""
+reloj_logica.py
+Lógica del reloj: alarmas, cronómetro y temporizador.
+La clase acepta un callback opcional 'on_alarm' que la interfaz proporcionará
+para mostrar notificaciones/sonido cuando salte una alarma.
+"""
 import time
 import datetime
 import threading
-from sounds.reproductor_sonidos import ReproductorSonidos
+import pytz
 
-class RelojLogic:
-    def __init__(self, lbl_hora, lbl_fecha, sound_path=None):
-        self.lbl_hora = lbl_hora
-        self.lbl_fecha = lbl_fecha
-        self.sound_path = sound_path
-        
-        # 🔔 Alarmas y sonidos
-        self.alarmas = []  # Lista de múltiples alarmas
-        self.reproductor = ReproductorSonidos()
-        
-        # ⏱️ Cronómetro
-        self.cronometro_corriendo = False
+class LogicaRelojPro:
+    def __init__(self, on_alarm_callback=None):
+        self.on_alarm = on_alarm_callback
+
+        # Alarmas: lista de dicts {hora: int, minuto: int, nombre: str, repetir: bool, activa: bool}
+        self.alarmas = []
+
+        # Iniciar hilo verificador de alarmas
+        self._stop_alarm_thread = False
+        self._alarm_thread = threading.Thread(target=self._verificar_alarmas_loop, daemon=True)
+        self._alarm_thread.start()
+
+        # Cronómetro
         self.cronometro_iniciado = False
-        self.tiempo_inicial_crono = 0
-        self.tiempo_pausado_crono = 0
-        self.tiempo_actual_crono = 0
-        self.vueltas = []  # Para registrar vueltas
-        
-        # ⏲️ Temporizador
-        self.temporizador_corriendo = False
-        self.tiempo_temporizador = 0
-        self.tiempo_inicial_temp = 0
-        
-        # 🧵 Control de hilos
-        self._reloj_activo = False
-        self._hilo_cronometro = None
-        self._hilo_temporizador = None
-        
-    # 🕒------------------- RELOJ -------------------🕒
-    def iniciar_reloj(self):
-        """Inicia el hilo del reloj si aún no está activo."""
-        if not self._reloj_activo:
-            self._reloj_activo = True
-            threading.Thread(target=self._actualizar_reloj, daemon=True).start()
-    
-    def _actualizar_reloj(self):
-        while self._reloj_activo:
-            ahora = datetime.datetime.now()
-            hora_texto = ahora.strftime("%H:%M:%S")
-            fecha_texto = ahora.strftime("%A, %d de %B de %Y")
-            
-            # Actualiza etiquetas en Tkinter (thread-safe)
-            try:
-                self.lbl_hora.config(text=hora_texto)
-                self.lbl_fecha.config(text=fecha_texto)
-            except:
-                pass
-            
-            # Verifica todas las alarmas
-            for alarma in self.alarmas[:]:  # Copia para evitar problemas
-                if alarma['activa'] and hora_texto.startswith(alarma['hora']):
-                    print(f"🔔 Alarma activada a las {hora_texto}")
-                    self.reproductor.reproducir("alarma")
-                    alarma['activa'] = False  # Desactivar hasta el próximo día
-            
-            time.sleep(1)
-    
-    # ⏰------------------- ALARMAS -------------------⏰
-    def agregar_alarma(self, hora, nombre="Alarma"):
-        """Agrega una nueva alarma"""
-        self.alarmas.append({
-            'hora': hora.strip(),
-            'nombre': nombre,
-            'activa': True
-        })
-        return len(self.alarmas) - 1  # Retorna el índice
-    
-    def eliminar_alarma(self, indice):
-        """Elimina una alarma por índice"""
-        if 0 <= indice < len(self.alarmas):
-            del self.alarmas[indice]
-    
-    def toggle_alarma(self, indice):
-        """Activa/desactiva una alarma"""
-        if 0 <= indice < len(self.alarmas):
-            self.alarmas[indice]['activa'] = not self.alarmas[indice]['activa']
-    
-    def obtener_alarmas(self):
-        """Retorna la lista de alarmas"""
-        return self.alarmas
-    
-    # ⏱️------------------- CRONÓMETRO -------------------⏱️
-    def sw_start(self):
-        """Inicia o reanuda el cronómetro"""
-        if not self.cronometro_corriendo:
-            self.cronometro_corriendo = True
-            
-            if not self.cronometro_iniciado:
-                # Primera vez que se inicia
-                self.tiempo_inicial_crono = time.time()
-                self.cronometro_iniciado = True
-            else:
-                # Reanudar después de pausa
-                self.tiempo_inicial_crono = time.time() - self.tiempo_pausado_crono
-            
-            # Iniciar hilo del cronómetro
-            if self._hilo_cronometro is None or not self._hilo_cronometro.is_alive():
-                self._hilo_cronometro = threading.Thread(
-                    target=self._actualizar_cronometro_interno, 
-                    daemon=True
-                )
-                self._hilo_cronometro.start()
-    
-    def sw_pause(self):
-        """Pausa el cronómetro"""
-        if self.cronometro_corriendo:
-            self.cronometro_corriendo = False
-            self.tiempo_pausado_crono = time.time() - self.tiempo_inicial_crono
-    
-    def sw_reset(self):
-        """Reinicia el cronómetro"""
         self.cronometro_corriendo = False
-        self.cronometro_iniciado = False
-        self.tiempo_inicial_crono = 0
-        self.tiempo_pausado_crono = 0
-        self.tiempo_actual_crono = 0
+        self._crono_start = 0.0
+        self._crono_acumulado = 0.0
         self.vueltas = []
-    
-    def sw_vuelta(self):
-        """Registra una vuelta/lap"""
-        if self.cronometro_corriendo:
-            tiempo_vuelta = self.obtener_tiempo_cronometro()
-            self.vueltas.append({
-                'numero': len(self.vueltas) + 1,
-                'tiempo': tiempo_vuelta
-            })
-            return tiempo_vuelta
-        return None
-    
-    def _actualizar_cronometro_interno(self):
-        """Actualiza el cronómetro en un hilo separado"""
-        while self.cronometro_corriendo:
-            self.tiempo_actual_crono = time.time() - self.tiempo_inicial_crono
-            time.sleep(0.01)
-    
-    def obtener_tiempo_cronometro(self):
-        """Obtiene el tiempo actual del cronómetro formateado"""
-        if self.cronometro_corriendo:
-            tiempo = self.tiempo_actual_crono
-        elif self.cronometro_iniciado:
-            tiempo = self.tiempo_pausado_crono
-        else:
-            tiempo = 0
-        
-        horas = int(tiempo // 3600)
-        minutos = int((tiempo % 3600) // 60)
-        segundos = int(tiempo % 60)
-        centesimas = int((tiempo % 1) * 100)
-        
-        return f"{horas:02d}:{minutos:02d}:{segundos:02d}.{centesimas:02d}"
-    
-    def obtener_vueltas(self):
-        """Retorna la lista de vueltas registradas"""
-        return self.vueltas
-    
-    # ⏲️------------------- TEMPORIZADOR -------------------⏲️
-    def temp_start(self, minutos, segundos):
-        """Inicia el temporizador"""
-        if not self.temporizador_corriendo:
-            self.tiempo_temporizador = (minutos * 60) + segundos
-            self.tiempo_inicial_temp = time.time()
-            self.temporizador_corriendo = True
-            
-            # Iniciar hilo del temporizador
-            if self._hilo_temporizador is None or not self._hilo_temporizador.is_alive():
-                self._hilo_temporizador = threading.Thread(
-                    target=self._actualizar_temporizador_interno,
-                    daemon=True
-                )
-                self._hilo_temporizador.start()
-    
-    def temp_pause(self):
-        """Pausa el temporizador"""
-        if self.temporizador_corriendo:
-            self.temporizador_corriendo = False
-            tiempo_transcurrido = time.time() - self.tiempo_inicial_temp
-            self.tiempo_temporizador -= int(tiempo_transcurrido)
-    
-    def temp_reset(self):
-        """Reinicia el temporizador"""
+
+        # Temporizador
+        self.temporizador_segundos = 0
         self.temporizador_corriendo = False
-        self.tiempo_temporizador = 0
-    
-    def _actualizar_temporizador_interno(self):
-        """Actualiza el temporizador en un hilo separado"""
-        while self.temporizador_corriendo:
-            tiempo_transcurrido = time.time() - self.tiempo_inicial_temp
-            tiempo_restante = self.tiempo_temporizador - int(tiempo_transcurrido)
-            
-            if tiempo_restante <= 0:
-                self.temporizador_corriendo = False
-                self.tiempo_temporizador = 0
-                # Reproducir sonido cuando termina
-                self.reproductor.reproducir("alarma")
-                break
-            
-            time.sleep(0.1)
-    
-    def obtener_tiempo_temporizador(self):
-        """Obtiene el tiempo restante del temporizador"""
-        if self.temporizador_corriendo:
-            tiempo_transcurrido = time.time() - self.tiempo_inicial_temp
-            tiempo_restante = max(0, self.tiempo_temporizador - int(tiempo_transcurrido))
+
+    # ------------------ ALARMAS ------------------
+    def agregar_alarma(self, hora: int, minuto: int, nombre: str = "Alarma", repetir: bool = False):
+        if not (0 <= hora <= 23 and 0 <= minuto <= 59):
+            raise ValueError("Hora o minuto fuera de rango")
+        self.alarmas.append({
+            "hora": int(hora),
+            "minuto": int(minuto),
+            "nombre": str(nombre),
+            "repetir": bool(repetir),
+            "activa": True
+        })
+
+    def eliminar_alarma(self, indice: int):
+        if 0 <= indice < len(self.alarmas):
+            self.alarmas.pop(indice)
+
+    def obtener_alarmas(self):
+        return list(self.alarmas)
+
+    def _verificar_alarmas_loop(self):
+        """Hilo que revisa cada 10s si hay alarmas que disparar.
+           Se compara por hora y minuto (sin requerir segundos exactos)."""
+        last_checked_minute = None
+        while not self._stop_alarm_thread:
+            ahora = datetime.datetime.now()
+            hm = (ahora.hour, ahora.minute)
+            if hm != last_checked_minute:
+                last_checked_minute = hm
+                # comprobar alarmas
+                for alarma in list(self.alarmas):  # copia para poder modificar
+                    if alarma["activa"] and alarma["hora"] == ahora.hour and alarma["minuto"] == ahora.minute:
+                        # disparar alarma
+                        if self.on_alarm:
+                            try:
+                                self.on_alarm(alarma)  # interfaz puede mostrar popup/sonar
+                            except Exception:
+                                pass
+                        # si no repetir, desactivar
+                        if not alarma.get("repetir", False):
+                            alarma["activa"] = False
+            time.sleep(6)
+
+    def stop(self):
+        self._stop_alarm_thread = True
+
+    # ------------------ CRONÓMETRO ------------------
+    def crono_start(self):
+        if not self.cronometro_iniciado:
+            self._crono_start = time.perf_counter()
+            self.cronometro_iniciado = True
+            self._crono_acumulado = 0.0
+        elif not self.cronometro_corriendo:
+            # reanudar
+            self._crono_start = time.perf_counter() - self._crono_acumulado
+        self.cronometro_corriendo = True
+
+    def crono_pause(self):
+        if self.cronometro_corriendo:
+            self._crono_acumulado = time.perf_counter() - self._crono_start
+            self.cronometro_corriendo = False
+
+    def crono_reset(self):
+        self.cronometro_iniciado = False
+        self.cronometro_corriendo = False
+        self._crono_start = 0.0
+        self._crono_acumulado = 0.0
+        self.vueltas.clear()
+
+    def crono_vuelta(self):
+        t = self.obtener_tiempo_cronometro()
+        if t:
+            self.vueltas.append(t)
+            return t
+        return None
+
+    def obtener_vueltas(self):
+        return list(self.vueltas)
+
+    def obtener_tiempo_cronometro(self):
+        if self.cronometro_corriendo:
+            elapsed = time.perf_counter() - self._crono_start
+        elif self.cronometro_iniciado:
+            elapsed = self._crono_acumulado
         else:
-            tiempo_restante = self.tiempo_temporizador
-        
-        minutos = int(tiempo_restante // 60)
-        segundos = int(tiempo_restante % 60)
-        
-        return f"{minutos:02d}:{segundos:02d}"
-    
-    def temporizador_activo(self):
-        """Verifica si el temporizador está corriendo"""
-        return self.temporizador_corriendo
+            elapsed = 0.0
+        horas, resto = divmod(elapsed, 3600)
+        minutos, segundos = divmod(resto, 60)
+        centesimas = int((segundos - int(segundos)) * 100)
+        return f"{int(horas):02}:{int(minutos):02}:{int(segundos):02}.{centesimas:02}"
+
+    # ------------------ TEMPORIZADOR ------------------
+    def iniciar_temporizador(self, segundos: int):
+        if segundos <= 0:
+            raise ValueError("El temporizador debe ser mayor a 0")
+        self.temporizador_segundos = int(segundos)
+        if not self.temporizador_corriendo:
+            self.temporizador_corriendo = True
+            threading.Thread(target=self._run_temporizador, daemon=True).start()
+
+    def _run_temporizador(self):
+        while self.temporizador_corriendo and self.temporizador_segundos > 0:
+            time.sleep(1)
+            self.temporizador_segundos -= 1
+        if self.temporizador_segundos <= 0:
+            # trigger
+            if self.on_alarm:
+                try:
+                    self.on_alarm({"nombre": "Temporizador", "hora": None, "minuto": None, "repetir": False})
+                except Exception:
+                    pass
+        self.temporizador_corriendo = False
+
+    def detener_temporizador(self):
+        self.temporizador_corriendo = False
+
+    def obtener_tiempo_temporizador(self):
+        s = max(0, int(self.temporizador_segundos))
+        h, r = divmod(s, 3600)
+        m, ss = divmod(r, 60)
+        return f"{int(h):02}:{int(m):02}:{int(ss):02}"
